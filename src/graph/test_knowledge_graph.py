@@ -1,381 +1,130 @@
-import os
 import sys
+from pathlib import Path
 
 
-# ==========================================================
-# PATH SETUP
-# ==========================================================
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+GRAPH_DIR = PROJECT_ROOT / "src" / "graph"
 
-PROJECT_ROOT = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        ".."
-    )
-)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
-GRAPH_DIRECTORY = os.path.dirname(
-    os.path.abspath(__file__)
-)
+if str(GRAPH_DIR) not in sys.path:
+    sys.path.insert(0, str(GRAPH_DIR))
 
-PARSER_DIRECTORY = os.path.abspath(
-    os.path.join(
-        GRAPH_DIRECTORY,
-        "..",
-        "parser"
-    )
-)
+from knowledge_graph import RepositoryKnowledgeGraph
 
 
-sys.path.insert(
-    0,
-    PROJECT_ROOT
-)
-
-sys.path.insert(
-    0,
-    GRAPH_DIRECTORY
-)
-
-sys.path.insert(
-    0,
-    PARSER_DIRECTORY
-)
-
-
-# ==========================================================
-# IMPORT
-# ==========================================================
-
-from knowledge_graph import (
-    RepositoryKnowledgeGraph
-)
-
-
-# ==========================================================
-# TEST REPOSITORY
-# ==========================================================
-
-repository_path = os.path.join(
-    PROJECT_ROOT,
-    "data",
-    "test_repo"
-)
-
-
-# ==========================================================
-# CREATE GRAPH
-# ==========================================================
-
-knowledge_graph = (
-    RepositoryKnowledgeGraph(
-        repository_path
-    )
-)
-
-
-# ==========================================================
-# BUILD GRAPH
-# ==========================================================
-
-knowledge_graph.analyze_repository()
-
-graph = knowledge_graph.build_graph()
-
-
-# ==========================================================
-# PRINT GRAPH
-# ==========================================================
-
-knowledge_graph.print_graph()
-
-
-# ==========================================================
-# STATISTICS
-# ==========================================================
-
-print("\n" + "=" * 70)
-print("GRAPH STATISTICS")
-print("=" * 70)
-
-statistics = knowledge_graph.statistics()
-
-print(
-    f"Nodes: {statistics['nodes']}"
-)
-
-print(
-    f"Edges: {statistics['edges']}"
-)
-
-print("\nNode Types:")
-
-for node_type, count in (
-    statistics["node_types"].items()
-):
-
-    print(
-        f"  {node_type}: {count}"
-    )
-
-print("\nRelationship Types:")
-
-for relationship, count in (
-    statistics["relationship_types"].items()
-):
-
-    print(
-        f"  {relationship}: {count}"
+def has_edge(graph, source, relationship, target):
+    return any(
+        edge["source"] == source
+        and edge["relationship"] == relationship
+        and edge["target"] == target
+        for edge in graph["edges"]
     )
 
 
-# ==========================================================
-# SAVE
-# ==========================================================
+def main():
+    print("=" * 70)
+    print("STEP 7.3 - IMPORT RESOLUTION TEST")
+    print("=" * 70)
 
-output_path = os.path.join(
-    PROJECT_ROOT,
-    "output",
-    "graph",
-    "repository_graph.json"
-)
+    repository_path = PROJECT_ROOT / "data" / "test_repo"
 
-knowledge_graph.save_json(
-    output_path
-)
+    graph_builder = RepositoryKnowledgeGraph(repository_path)
+    graph = graph_builder.build()
 
-print(
-    f"\nGraph saved to:\n{output_path}"
-)
+    graph_builder.print_graph()
 
+    app_file = (repository_path / "app.py").resolve()
+    service_file = (repository_path / "service.py").resolve()
 
-# ==========================================================
-# VALIDATION
-# ==========================================================
+    app_node = f"file:{app_file}"
+    service_node = f"file:{service_file}"
+    service_class = "class:Service"
+    service_method = "method:Service.process"
+    service_variable = f"variable:{app_file}:service"
 
-print("\n" + "=" * 70)
-print("VALIDATION")
-print("=" * 70)
+    print("\n" + "=" * 70)
+    print("VALIDATION")
+    print("=" * 70)
 
+    failures = 0
+    node_ids = {item["id"] for item in graph["nodes"]}
 
-# ----------------------------------------------------------
-# Required nodes
-# ----------------------------------------------------------
-
-required_nodes = [
-    "class:Service",
-    "method:Service.process"
-]
-
-
-for node in required_nodes:
-
-    if node in graph:
-
-        print(
-            f"[PASS] Node exists: {node}"
-        )
-
-    else:
-
-        print(
-            f"[FAIL] Node missing: {node}"
-        )
-
-
-# ----------------------------------------------------------
-# Find service variable
-# ----------------------------------------------------------
-
-service_variable = None
-
-for node, data in graph.nodes(
-    data=True
-):
-
-    if (
-        data.get("type") == "variable"
-        and data.get("name") == "service"
-    ):
-
-        service_variable = node
-        break
-
-
-if service_variable:
-
-    print(
-        "[PASS] Service instance node: "
-        f"{service_variable}"
-    )
-
-else:
-
-    print(
-        "[FAIL] Service instance node missing"
-    )
-
-
-# ----------------------------------------------------------
-# INSTANCE_OF
-# ----------------------------------------------------------
-
-if service_variable:
-
-    if graph.has_edge(
+    for node in [
+        app_node,
+        service_node,
+        service_class,
+        service_method,
         service_variable,
-        "class:Service"
-    ):
-
-        if (
-            graph[
-                service_variable
-            ][
-                "class:Service"
-            ].get(
-                "relationship"
-            )
-            == "INSTANCE_OF"
-        ):
-
-            print(
-                "[PASS] "
-                "service --INSTANCE_OF--> "
-                "Service"
-            )
-
+    ]:
+        if node in node_ids:
+            print(f"[PASS] Node exists: {node}")
         else:
+            print(f"[FAIL] Missing node: {node}")
+            failures += 1
 
-            print(
-                "[FAIL] Wrong INSTANCE_OF relationship"
-            )
+    checks = [
+        (
+            app_node,
+            "IMPORTS_FILE",
+            service_node,
+            "[PASS] app.py --IMPORTS_FILE--> service.py",
+            "[FAIL] Missing IMPORTS_FILE relationship",
+        ),
+        (
+            app_node,
+            "IMPORTS_CLASS",
+            service_class,
+            "[PASS] app.py --IMPORTS_CLASS--> Service",
+            "[FAIL] Missing IMPORTS_CLASS relationship",
+        ),
+        (
+            service_variable,
+            "INSTANCE_OF",
+            service_class,
+            "[PASS] service --INSTANCE_OF--> Service",
+            "[FAIL] Missing INSTANCE_OF relationship",
+        ),
+        (
+            service_variable,
+            "CALLS",
+            service_method,
+            "[PASS] service --CALLS--> Service.process",
+            "[FAIL] Missing CALLS relationship",
+        ),
+        (
+            service_class,
+            "DEFINES",
+            service_method,
+            "[PASS] Service --DEFINES--> Service.process",
+            "[FAIL] Missing DEFINES relationship",
+        ),
+        (
+            app_node,
+            "CALLS",
+            service_method,
+            "[PASS] app.py --CALLS--> Service.process",
+            "[FAIL] Missing app.py CALLS relationship",
+        ),
+    ]
 
-    else:
-
-        print(
-            "[FAIL] Missing INSTANCE_OF relationship"
-        )
-
-
-# ----------------------------------------------------------
-# DEFINES
-# ----------------------------------------------------------
-
-if graph.has_edge(
-    "class:Service",
-    "method:Service.process"
-):
-
-    if (
-        graph[
-            "class:Service"
-        ][
-            "method:Service.process"
-        ].get(
-            "relationship"
-        )
-        == "DEFINES"
-    ):
-
-        print(
-            "[PASS] "
-            "Service --DEFINES--> "
-            "Service.process"
-        )
-
-    else:
-
-        print(
-            "[FAIL] Wrong DEFINES relationship"
-        )
-
-else:
-
-    print(
-        "[FAIL] Missing DEFINES relationship"
-    )
-
-
-# ----------------------------------------------------------
-# CALLS
-# ----------------------------------------------------------
-
-calls_passed = False
-
-if service_variable:
-
-    if graph.has_edge(
-        service_variable,
-        "method:Service.process"
-    ):
-
-        if (
-            graph[
-                service_variable
-            ][
-                "method:Service.process"
-            ].get(
-                "relationship"
-            )
-            == "CALLS"
-        ):
-
-            calls_passed = True
-
-            print(
-                "[PASS] "
-                "service --CALLS--> "
-                "Service.process"
-            )
-
+    for source, relationship, target, ok, fail in checks:
+        if has_edge(graph, source, relationship, target):
+            print(ok)
         else:
+            print(fail)
+            failures += 1
 
-            print(
-                "[FAIL] Wrong CALLS relationship"
-            )
+    print("\n" + "=" * 70)
+    print("STEP 7.3 STATUS")
+    print("=" * 70)
 
+    if failures == 0:
+        print("SUCCESS: Import and relationship resolution completed.")
     else:
-
-        print(
-            "[FAIL] Missing CALLS relationship"
-        )
+        print(f"FAILED: {failures} validation checks failed.")
 
 
-# ==========================================================
-# FINAL STATUS
-# ==========================================================
-
-print("\n" + "=" * 70)
-print("STEP 6 STATUS")
-print("=" * 70)
-
-
-if (
-    "class:Service" in graph
-    and
-    "method:Service.process" in graph
-    and
-    service_variable
-    and
-    graph.has_edge(
-        service_variable,
-        "class:Service"
-    )
-    and
-    graph.has_edge(
-        "class:Service",
-        "method:Service.process"
-    )
-    and
-    calls_passed
-):
-
-    print(
-        "SUCCESS: Step 6 completed."
-    )
-
-else:
-
-    print(
-        "Step 6 still has unresolved relationships."
-    )
+if __name__ == "__main__":
+    main()
