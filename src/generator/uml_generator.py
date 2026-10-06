@@ -8,20 +8,28 @@ class UMLGenerator:
     def __init__(
         self,
         graph_path,
-        output_dir,
-        plantuml_jar,
+        output_dir=None,
+        plantuml_jar=None,
     ):
         self.graph_path = Path(graph_path)
+
+        base = self.graph_path.resolve().parents[1]
+
+        if output_dir is None:
+            output_dir = base / "uml"
+
         self.output_dir = Path(output_dir)
+
+        if plantuml_jar is None:
+            plantuml_jar = Path(
+                r"C:\PlantUML\plantuml-1.2026.8.jar"
+            )
+
         self.plantuml_jar = Path(plantuml_jar)
 
         self.graph = {}
-        self.nodes = []
+        self.nodes = {}
         self.edges = []
-
-        self.files = []
-        self.classes = []
-        self.methods = []
 
     # =========================================================
     # LOAD GRAPH
@@ -37,222 +45,244 @@ class UMLGenerator:
         with open(
             self.graph_path,
             "r",
-            encoding="utf-8"
+            encoding="utf-8",
         ) as f:
             self.graph = json.load(f)
 
-        self._normalize_graph()
+        self.load_nodes()
+        self.load_edges()
 
-    # =========================================================
-    # NORMALIZE GRAPH
-    # =========================================================
+    def load_nodes(self):
 
-    def _normalize_graph(self):
+        self.nodes = {}
 
         raw_nodes = self.graph.get("nodes", [])
 
-        self.nodes = []
+        if not isinstance(raw_nodes, list):
+            return
 
-        if isinstance(raw_nodes, list):
+        for node in raw_nodes:
 
-            for node in raw_nodes:
+            if not isinstance(node, dict):
+                continue
 
-                if isinstance(node, str):
-                    self.nodes.append({"id": node})
-                    continue
+            node_id = node.get("id")
 
-                if not isinstance(node, dict):
-                    continue
+            if node_id:
+                self.nodes[str(node_id)] = node
 
-                node_id = (
-                    node.get("id")
-                    or node.get("node")
-                    or node.get("name")
-                )
-
-                if node_id:
-
-                    normalized = dict(node)
-                    normalized["id"] = str(node_id)
-
-                    self.nodes.append(normalized)
-
-        elif isinstance(raw_nodes, dict):
-
-            for node_id, attributes in raw_nodes.items():
-
-                node = {
-                    "id": str(node_id)
-                }
-
-                if isinstance(attributes, dict):
-                    node.update(attributes)
-
-                node["id"] = str(node_id)
-
-                self.nodes.append(node)
-
-        # -----------------------------------------------------
-
-        raw_edges = self.graph.get("edges", [])
+    def load_edges(self):
 
         self.edges = []
 
-        if isinstance(raw_edges, list):
+        raw_edges = self.graph.get("edges", [])
 
-            for edge in raw_edges:
+        if not isinstance(raw_edges, list):
+            return
 
-                if not isinstance(edge, dict):
-                    continue
+        for edge in raw_edges:
 
-                source = (
-                    edge.get("source")
-                    or edge.get("from")
-                    or edge.get("u")
-                )
+            if not isinstance(edge, dict):
+                continue
 
-                target = (
-                    edge.get("target")
-                    or edge.get("to")
-                    or edge.get("v")
-                )
+            source = edge.get("source")
+            target = edge.get("target")
+            relationship = edge.get("relationship")
 
-                relation = (
-                    edge.get("relation")
-                    or edge.get("relationship")
-                    or edge.get("type")
-                )
+            if not source or not target:
+                continue
 
-                if source and target and relation:
+            if not relationship:
+                continue
 
-                    self.edges.append(
-                        {
-                            "source": str(source),
-                            "target": str(target),
-                            "relation": str(relation),
-                        }
-                    )
-
-        self._classify_nodes()
+            self.edges.append(
+                {
+                    "source": str(source),
+                    "target": str(target),
+                    "relationship": str(relationship),
+                }
+            )
 
     # =========================================================
     # NODE HELPERS
     # =========================================================
 
-    @staticmethod
-    def node_type(node_id):
-
-        node_id = str(node_id)
+    def node_type(self, node_id):
 
         if ":" not in node_id:
             return ""
 
         return node_id.split(":", 1)[0]
 
-    @staticmethod
-    def node_value(node_id):
-
-        node_id = str(node_id)
+    def node_value(self, node_id):
 
         if ":" not in node_id:
             return node_id
 
         return node_id.split(":", 1)[1]
 
-    @staticmethod
-    def windows_filename(path_text):
+    def readable_name(self, node_id):
 
-        path_text = str(path_text)
-        path_text = path_text.replace("/", "\\")
+        node = self.nodes.get(node_id, {})
 
-        return path_text.rsplit("\\", 1)[-1]
+        node_type = self.node_type(node_id)
 
-    # =========================================================
-    # CLASSIFY NODES
-    # =========================================================
+        if node_type == "file":
 
-    def _classify_nodes(self):
-
-        self.files = []
-        self.classes = []
-        self.methods = []
-
-        for node in self.nodes:
-
-            node_id = str(node["id"])
-
-            node_type = (
-                node.get("type")
-                or self.node_type(node_id)
+            return node.get(
+                "name",
+                Path(
+                    node.get(
+                        "path",
+                        self.node_value(node_id),
+                    )
+                ).name,
             )
 
-            if node_type == "file":
-                self.files.append(node_id)
+        if node_type == "class":
 
-            elif node_type == "class":
-                self.classes.append(node_id)
+            return node.get(
+                "name",
+                self.node_value(node_id),
+            )
 
-            elif node_type == "method":
-                self.methods.append(node_id)
+        if node_type == "method":
+
+            class_name = node.get("class_name")
+            method_name = node.get("name")
+
+            if class_name and method_name:
+                return f"{class_name}.{method_name}"
+
+            return self.node_value(node_id)
+
+        if node_type == "variable":
+
+            return node.get(
+                "name",
+                self.node_value(node_id),
+            )
+
+        if node_type == "module":
+
+            return node.get(
+                "name",
+                self.node_value(node_id),
+            )
+
+        return node.get(
+            "name",
+            self.node_value(node_id),
+        )
 
     # =========================================================
-    # METHOD LOOKUP
+    # ALIASES
     # =========================================================
 
-    def methods_for_class(self, class_node):
+    def build_aliases(self):
 
-        class_name = self.node_value(class_node)
+        aliases = {}
 
-        prefix = class_name + "."
+        counter = 1
 
-        result = []
+        # Files
+        for node_id in self.nodes:
 
-        for method_node in self.methods:
+            if self.node_type(node_id) == "file":
 
-            method_symbol = self.node_value(method_node)
+                aliases[node_id] = f"N{counter}"
+                counter += 1
 
-            if method_symbol.startswith(prefix):
+        # Classes
+        for node_id in self.nodes:
 
-                method_name = method_symbol[len(prefix):]
+            if self.node_type(node_id) == "class":
 
-                result.append(method_name)
+                aliases[node_id] = f"N{counter}"
+                counter += 1
 
-        return result
+        # Variables
+        # IMPORTANT:
+        # Variables are represented as explicit UML objects.
+        for node_id in self.nodes:
+
+            if self.node_type(node_id) == "variable":
+
+                aliases[node_id] = f"V{counter}"
+                counter += 1
+
+        return aliases
 
     # =========================================================
-    # GENERATE PLANTUML
+    # CLASS METHODS
     # =========================================================
 
-    def generate_puml(self):
+    def get_class_methods(self, class_id):
+
+        methods = []
+
+        for edge in self.edges:
+
+            if (
+                edge["source"] == class_id
+                and edge["relationship"] == "DEFINES"
+                and self.node_type(edge["target"]) == "method"
+            ):
+
+                methods.append(edge["target"])
+
+        return methods
+
+    # =========================================================
+    # METHOD → CLASS
+    # =========================================================
+
+    def get_class_for_method(self, method_id):
+
+        for edge in self.edges:
+
+            if (
+                edge["relationship"] == "DEFINES"
+                and edge["target"] == method_id
+                and self.node_type(edge["source"]) == "class"
+            ):
+
+                return edge["source"]
+
+        method_node = self.nodes.get(
+            method_id,
+            {},
+        )
+
+        class_name = method_node.get("class_name")
+
+        if class_name:
+
+            candidate = f"class:{class_name}"
+
+            if candidate in self.nodes:
+                return candidate
+
+        return None
+
+    # =========================================================
+    # NODE GENERATION
+    # =========================================================
+
+    def generate_nodes(self, aliases):
 
         lines = []
 
-        lines.append("@startuml")
-        lines.append("title CIAO Generated Software Architecture")
-        lines.append("allowmixing")
-        lines.append("skinparam shadowing false")
-        lines.append("skinparam componentStyle rectangle")
-        lines.append("")
+        # -----------------------------------------------------
+        # FILES
+        # -----------------------------------------------------
 
-        file_aliases = {}
-        class_aliases = {}
+        for node_id, alias in aliases.items():
 
-        # =====================================================
-        # FILE COMPONENTS
-        # =====================================================
+            if self.node_type(node_id) != "file":
+                continue
 
-        for index, file_node in enumerate(
-            self.files,
-            start=1
-        ):
-
-            alias = f"F{index}"
-
-            label = self.windows_filename(
-                self.node_value(file_node)
-            )
-
-            file_aliases[file_node] = alias
+            label = self.readable_name(node_id)
 
             lines.append(
                 f'component "{label}" as {alias}'
@@ -260,244 +290,411 @@ class UMLGenerator:
 
         lines.append("")
 
-        # =====================================================
+        # -----------------------------------------------------
         # CLASSES
-        # =====================================================
+        # -----------------------------------------------------
 
-        for index, class_node in enumerate(
-            self.classes,
-            start=1
-        ):
+        for node_id, alias in aliases.items():
 
-            alias = f"C{index}"
+            if self.node_type(node_id) != "class":
+                continue
 
-            label = self.node_value(class_node)
+            label = self.readable_name(node_id)
 
-            class_aliases[class_node] = alias
-
-            methods = self.methods_for_class(
-                class_node
+            lines.append(
+                f'class "{label}" as {alias} {{'
             )
 
-            if methods:
+            methods = self.get_class_methods(node_id)
 
-                lines.append(
-                    f'class "{label}" as {alias} {{'
+            for method_id in methods:
+
+                method_node = self.nodes.get(
+                    method_id,
+                    {},
                 )
 
-                for method_name in methods:
+                method_name = method_node.get("name")
 
-                    lines.append(
-                        f"    +{method_name}()"
+                if not method_name:
+
+                    method_name = (
+                        self.node_value(method_id)
+                        .rsplit(".", 1)[-1]
                     )
 
-                lines.append("}")
-
-            else:
-
                 lines.append(
-                    f'class "{label}" as {alias}'
+                    f"    +{method_name}()"
                 )
+
+            lines.append("}")
 
         lines.append("")
 
-        # =====================================================
-        # ARCHITECTURE RELATIONSHIPS
-        # =====================================================
+        # -----------------------------------------------------
+        # VARIABLES
+        # -----------------------------------------------------
 
-        generated_relationships = set()
+        for node_id, alias in aliases.items():
+
+            if self.node_type(node_id) != "variable":
+                continue
+
+            label = self.readable_name(node_id)
+
+            lines.append(
+                f'object "{label}" as {alias}'
+            )
+
+        return lines
+
+    # =========================================================
+    # RELATIONSHIP GENERATION
+    # =========================================================
+
+    def generate_relationships(self, aliases):
+
+        lines = []
+
+        rendered = set()
 
         for edge in self.edges:
 
             source = edge["source"]
             target = edge["target"]
-            relation = edge["relation"]
+            relationship = edge["relationship"]
+
+            key = (
+                source,
+                relationship,
+                target,
+            )
+
+            if key in rendered:
+                continue
 
             # -------------------------------------------------
-            # FILE IMPORTS FILE
+            # FILE → MODULE IMPORT
             # -------------------------------------------------
 
             if (
-                relation == "IMPORTS_FILE"
-                and source in file_aliases
-                and target in file_aliases
+                relationship == "IMPORTS"
+                and self.node_type(source) == "file"
+                and self.node_type(target) == "module"
             ):
 
-                relationship = (
-                    file_aliases[source],
-                    file_aliases[target],
-                    "imports"
+                if source not in aliases:
+                    continue
+
+                source_alias = aliases[source]
+
+                module_name = self.readable_name(target)
+
+                lines.append(
+                    f'note right of {source_alias} : '
+                    f'IMPORTS -> {module_name}'
                 )
 
-                if relationship not in generated_relationships:
+                rendered.add(key)
 
-                    lines.append(
-                        f"{file_aliases[source]} "
-                        f"..> "
-                        f"{file_aliases[target]} "
-                        f": imports"
-                    )
-
-                    generated_relationships.add(
-                        relationship
-                    )
+                continue
 
             # -------------------------------------------------
-            # FILE DEFINES CLASS
+            # FILE → CLASS CALL
             # -------------------------------------------------
 
-            elif (
-                relation == "DEFINES"
-                and source in file_aliases
-                and target in class_aliases
+            if (
+                relationship == "CALLS"
+                and self.node_type(source) == "file"
+                and self.node_type(target) == "class"
             ):
 
-                relationship = (
-                    file_aliases[source],
-                    class_aliases[target],
-                    "defines"
+                if (
+                    source not in aliases
+                    or target not in aliases
+                ):
+                    continue
+
+                lines.append(
+                    f'{aliases[source]} --> '
+                    f'{aliases[target]} : calls'
                 )
 
-                if relationship not in generated_relationships:
+                rendered.add(key)
 
-                    lines.append(
-                        f"{file_aliases[source]} "
-                        f"..> "
-                        f"{class_aliases[target]} "
-                        f": defines"
-                    )
-
-                    generated_relationships.add(
-                        relationship
-                    )
+                continue
 
             # -------------------------------------------------
-            # FILE CALLS METHOD
+            # FILE → METHOD CALL
             # -------------------------------------------------
 
-            elif (
-                relation == "CALLS"
-                and source in file_aliases
-                and target.startswith("method:")
+            if (
+                relationship == "CALLS"
+                and self.node_type(source) == "file"
+                and self.node_type(target) == "method"
             ):
 
-                method_symbol = self.node_value(target)
+                class_id = self.get_class_for_method(target)
 
-                if "." not in method_symbol:
+                if (
+                    source not in aliases
+                    or class_id not in aliases
+                ):
                     continue
 
-                class_name, method_name = (
-                    method_symbol.rsplit(".", 1)
+                method_node = self.nodes.get(
+                    target,
+                    {},
                 )
 
-                class_node = (
-                    "class:" + class_name
-                )
+                method_name = method_node.get("name")
 
-                if class_node not in class_aliases:
-                    continue
+                if not method_name:
 
-                relationship = (
-                    file_aliases[source],
-                    class_aliases[class_node],
-                    f"calls:{method_name}"
-                )
-
-                if relationship not in generated_relationships:
-
-                    lines.append(
-                        f"{file_aliases[source]} "
-                        f"--> "
-                        f"{class_aliases[class_node]} "
-                        f": calls {method_name}()"
+                    method_name = (
+                        self.node_value(target)
+                        .rsplit(".", 1)[-1]
                     )
 
-                    generated_relationships.add(
-                        relationship
-                    )
+                lines.append(
+                    f'{aliases[source]} --> '
+                    f'{aliases[class_id]} : '
+                    f'calls {method_name}()'
+                )
+
+                rendered.add(key)
+
+                continue
 
             # -------------------------------------------------
-            # VARIABLE INSTANCE OF CLASS
+            # FILE → CLASS DEFINES
             # -------------------------------------------------
 
-            elif (
-                relation == "INSTANCE_OF"
-                and source.startswith("variable:")
-                and target in class_aliases
+            if (
+                relationship == "DEFINES"
+                and self.node_type(source) == "file"
+                and self.node_type(target) == "class"
             ):
 
-                variable_value = self.node_value(source)
-
-                if ":" not in variable_value:
+                if (
+                    source not in aliases
+                    or target not in aliases
+                ):
                     continue
 
-                source_file = variable_value.rsplit(
-                    ":",
-                    1
-                )[0]
-
-                file_node = (
-                    "file:" + source_file
+                lines.append(
+                    f'{aliases[source]} ..> '
+                    f'{aliases[target]} : defines'
                 )
 
-                if file_node not in file_aliases:
+                rendered.add(key)
+
+                continue
+
+            # -------------------------------------------------
+            # CLASS → METHOD DEFINES
+            # -------------------------------------------------
+
+            if (
+                relationship == "DEFINES"
+                and self.node_type(source) == "class"
+                and self.node_type(target) == "method"
+            ):
+
+                if (
+                    source not in aliases
+                    or target not in self.nodes
+                ):
                     continue
 
-                relationship = (
-                    file_aliases[file_node],
-                    class_aliases[target],
-                    "creates"
+                method_node = self.nodes.get(
+                    target,
+                    {},
                 )
 
-                if relationship not in generated_relationships:
+                method_name = method_node.get("name")
 
-                    lines.append(
-                        f"{file_aliases[file_node]} "
-                        f"--> "
-                        f"{class_aliases[target]} "
-                        f": creates instance"
+                if not method_name:
+
+                    method_name = (
+                        self.node_value(target)
+                        .rsplit(".", 1)[-1]
                     )
 
-                    generated_relationships.add(
-                        relationship
+                lines.append(
+                    f'note right of {aliases[source]} : '
+                    f'DEFINES -> {method_name}()'
+                )
+
+                rendered.add(key)
+
+                continue
+
+            # -------------------------------------------------
+            # VARIABLE → CLASS INSTANCE_OF
+            # -------------------------------------------------
+            #
+            # IMPORTANT:
+            # The variable itself is now the UML source.
+            #
+            # Graph:
+            # service --INSTANCE_OF--> Service
+            #
+            # UML:
+            # V... ..> N... : instance of
+            # -------------------------------------------------
+
+            if (
+                relationship == "INSTANCE_OF"
+                and self.node_type(source) == "variable"
+                and self.node_type(target) == "class"
+            ):
+
+                if (
+                    source not in aliases
+                    or target not in aliases
+                ):
+                    continue
+
+                lines.append(
+                    f'{aliases[source]} ..> '
+                    f'{aliases[target]} : instance of'
+                )
+
+                rendered.add(key)
+
+                continue
+
+            # -------------------------------------------------
+            # VARIABLE → METHOD CALL
+            # -------------------------------------------------
+            #
+            # IMPORTANT:
+            # The variable itself is now the UML source.
+            #
+            # Graph:
+            # service --CALLS--> Service.process
+            #
+            # UML:
+            # V... --> N... : calls process()
+            # -------------------------------------------------
+
+            if (
+                relationship == "CALLS"
+                and self.node_type(source) == "variable"
+                and self.node_type(target) == "method"
+            ):
+
+                class_id = self.get_class_for_method(target)
+
+                if (
+                    source not in aliases
+                    or class_id not in aliases
+                ):
+                    continue
+
+                method_node = self.nodes.get(
+                    target,
+                    {},
+                )
+
+                method_name = method_node.get("name")
+
+                if not method_name:
+
+                    method_name = (
+                        self.node_value(target)
+                        .rsplit(".", 1)[-1]
                     )
+
+                lines.append(
+                    f'{aliases[source]} --> '
+                    f'{aliases[class_id]} : '
+                    f'calls {method_name}()'
+                )
+
+                rendered.add(key)
+
+                continue
+
+        return lines
+
+    # =========================================================
+    # GENERATE PLANTUML
+    # =========================================================
+
+    def generate(self):
+
+        self.load_graph()
+
+        aliases = self.build_aliases()
+
+        lines = []
+
+        lines.append("@startuml")
+
+        lines.append(
+            "title CIAO Generated Software Architecture"
+        )
+
+        lines.append("allowmixing")
+
+        lines.append(
+            "skinparam shadowing false"
+        )
+
+        lines.append(
+            "skinparam componentStyle rectangle"
+        )
 
         lines.append("")
+
+        lines.extend(
+            self.generate_nodes(aliases)
+        )
+
+        lines.append("")
+
+        lines.extend(
+            self.generate_relationships(aliases)
+        )
+
+        lines.append("")
+
         lines.append("@enduml")
 
         return "\n".join(lines)
 
     # =========================================================
-    # SAVE PUML
+    # SAVE
     # =========================================================
 
-    def save_puml(self, content):
+    def save(self, content):
 
         self.output_dir.mkdir(
             parents=True,
-            exist_ok=True
+            exist_ok=True,
         )
 
-        output_path = (
-            self.output_dir / "architecture.puml"
+        puml_path = (
+            self.output_dir
+            / "architecture.puml"
         )
 
         with open(
-            output_path,
+            puml_path,
             "w",
             encoding="utf-8",
-            newline="\n"
         ) as f:
-
             f.write(content)
 
-        return output_path
+        return puml_path
 
     # =========================================================
-    # RENDER PNG
+    # RENDER
     # =========================================================
 
-    def render_png(self, puml_path):
+    def render(self, puml_path):
 
         if not self.plantuml_jar.exists():
 
@@ -514,94 +711,95 @@ class UMLGenerator:
             str(puml_path),
         ]
 
-        print("\nRunning PlantUML:")
-        print(" ".join(command))
-
         result = subprocess.run(
             command,
             capture_output=True,
             text=True,
-            encoding="utf-8",
-            errors="replace",
         )
-
-        if result.stdout:
-            print(result.stdout)
-
-        if result.stderr:
-            print(result.stderr)
 
         if result.returncode != 0:
 
             raise RuntimeError(
-                "PlantUML failed with "
-                f"exit code {result.returncode}"
+                "PlantUML rendering failed:\n"
+                + result.stderr
             )
 
-        png_path = puml_path.with_suffix(".png")
+        png_path = (
+            puml_path.parent
+            / "architecture.png"
+        )
 
         if not png_path.exists():
 
-            raise RuntimeError(
-                "PlantUML finished but "
-                "architecture.png was not generated."
+            raise FileNotFoundError(
+                f"PlantUML did not generate: "
+                f"{png_path}"
             )
 
         return png_path
 
-    # =========================================================
-    # MAIN GENERATION
-    # =========================================================
 
-    def generate(self):
+# =============================================================
+# MAIN
+# =============================================================
 
-        print("\n" + "=" * 70)
-        print("CIAO UML GENERATION")
-        print("=" * 70)
+if __name__ == "__main__":
 
-        self.load_graph()
+    base = Path(
+        __file__
+    ).resolve().parents[2]
 
-        print("\n[PASS] Knowledge graph loaded.")
-        print(f"[INFO] Files: {len(self.files)}")
-        print(f"[INFO] Classes: {len(self.classes)}")
-        print(f"[INFO] Methods: {len(self.methods)}")
+    graph_path = (
+        base
+        / "output"
+        / "graph"
+        / "repository_graph.json"
+    )
 
-        print("\n[INFO] File nodes:")
+    output_dir = (
+        base
+        / "output"
+        / "uml"
+    )
 
-        for node in self.files:
-            print(f"       {repr(node)}")
+    plantuml_jar = Path(
+        r"C:\PlantUML\plantuml-1.2026.8.jar"
+    )
 
-        print("\n[INFO] Class nodes:")
+    generator = UMLGenerator(
+        graph_path=graph_path,
+        output_dir=output_dir,
+        plantuml_jar=plantuml_jar,
+    )
 
-        for node in self.classes:
-            print(f"       {repr(node)}")
+    content = generator.generate()
 
-        content = self.generate_puml()
+    puml_path = generator.save(
+        content
+    )
 
-        puml_path = self.save_puml(content)
+    png_path = generator.render(
+        puml_path
+    )
 
-        print("\n[PASS] PlantUML source generated.")
-        print(f"[PASS] {puml_path}")
+    print("=" * 70)
+    print("STEP 9.4A - VERIFIED UML GENERATION")
+    print("=" * 70)
 
-        print("\n" + "-" * 70)
-        print("GENERATED PLANTUML")
-        print("-" * 70)
-        print(content)
-        print("-" * 70)
+    print()
+    print("Knowledge graph:")
+    print(graph_path)
 
-        png_path = self.render_png(
-            puml_path
-        )
+    print()
+    print("PlantUML source:")
+    print(puml_path)
 
-        print("\n[PASS] UML image generated.")
-        print(f"[PASS] {png_path}")
+    print()
+    print("Rendered architecture:")
+    print(png_path)
 
-        print("\n" + "=" * 70)
-        print("UML GENERATION STATUS")
-        print("=" * 70)
-        print("SUCCESS: Architecture UML generated.")
-
-        return {
-            "puml": str(puml_path),
-            "png": str(png_path),
-        }
+    print()
+    print("=" * 70)
+    print("STEP 9.4A STATUS")
+    print("=" * 70)
+    print("COMPLETED")
