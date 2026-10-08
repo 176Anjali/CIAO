@@ -422,6 +422,23 @@ class ArchitectureValidator:
     def resolve_component_node(self, claim):
         claim = self.clean_markdown(claim).strip()
 
+        # Natural-language module descriptions such as
+        # ``service (module containing the Service class)`` should
+        # resolve to the actual module node ``module:service``.
+        module_match = re.match(
+            r"^([A-Za-z_][\w\.]*)\s*\(\s*module\s+containing\b",
+            claim,
+            flags=re.IGNORECASE,
+        )
+        if module_match:
+            module_name = module_match.group(1)
+            module_node = self.find_node_by_value(
+                "module",
+                module_name,
+            )
+            if module_node:
+                return module_node
+
         if self.node_exists(claim):
             return claim
 
@@ -724,6 +741,25 @@ class ArchitectureValidator:
                 continue
 
             lower = claim.lower()
+
+            # Architectural words such as ``central`` are interpretations,
+            # not facts proven merely by a DEFINES relationship. Keep them
+            # under human review even when the underlying graph relationship
+            # exists.
+            if re.search(
+                r"\b(central|core|orchestrator|main|entry[- ]point|client[- ]server)\b",
+                lower,
+            ):
+                self.add_review(
+                    "ARCHITECTURAL OBSERVATIONS",
+                    claim,
+                    (
+                        "The claim contains an architectural interpretation "
+                        "that is not explicitly represented by the current "
+                        "knowledge graph."
+                    ),
+                )
+                continue
 
             # -------------------------------------------------
             # SERVICE CLASS
