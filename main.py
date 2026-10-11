@@ -16,10 +16,10 @@ from ollama import AsyncClient
 
 BASE_DIR = Path(__file__).resolve().parent
 
-CONFIG_PATH = BASE_DIR / "repomix.config.json"
-MEMORY_PATH = BASE_DIR / "prompt.json"
-FULL_CODE_PATH = BASE_DIR / "full_code.txt"
-MD_PATH = BASE_DIR / "arc42_documentation.txt"
+CONFIG_PATH = Path(os.getenv("CIAO_REPOMIX_CONFIG_PATH", BASE_DIR / "repomix.config.json"))
+MEMORY_PATH = Path(os.getenv("CIAO_PROMPT_PATH", BASE_DIR / "prompt.json"))
+FULL_CODE_PATH = Path(os.getenv("CIAO_FULL_CODE_PATH", BASE_DIR / "full_code.txt"))
+MD_PATH = Path(os.getenv("CIAO_DOCUMENTATION_PATH", BASE_DIR / "arc42_documentation.txt"))
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
